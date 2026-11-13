@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+!.env.example
+*.log
+# Whisper speech models (hundreds of MB; downloaded locally, see README)
+models/
+# Local databases and macOS files
+*.db
+*.db-*
+*.sqlite
+.DS_Store

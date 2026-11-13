@@ -1,0 +1,30 @@
+{
+  "_note": "Shape transcribed from Meta's Groups API webhooks reference (developers.facebook.com/documentation/business-messaging/whatsapp/groups/webhooks), read 2026-11-09. Values are placeholders. UNVERIFIED: replace with a scrubbed recorded payload in fixtures/recorded/ once a live OBA number is available.",
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "WABA_ID",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": { "display_phone_number": "15550001111", "phone_number_id": "PHONE_NUMBER_ID" },
+            "contacts": [{ "profile": { "name": "Jane" }, "wa_id": "15550002222", "user_id": "US.1234567890" }],
+            "messages": [
+              {
+                "from": "15550002222",
+                "from_user_id": "US.1234567890",
+                "group_id": "GROUP_ID",
+                "id": "wamid.PLACEHOLDER",
+                "timestamp": "1700000000",
+                "type": "text",
+                "text": { "body": "hello group" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

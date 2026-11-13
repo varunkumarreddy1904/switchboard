@@ -1,0 +1,45 @@
+{
+  "name": "switchboard-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WhatsApp simulator POC: Cloud API + linked-device lanes, one agent, WATI-style console, live lab",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch --clear-screen=false src/server.ts",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "tsx src/server.ts",
+    "tunnel": "node scripts/tunnel.mjs",
+    "demo": "vite build && tsx src/server.ts --demo",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0",
+    "@fastify/static": "10.1.10",
+    "baileys": "7.0.0-rc14",
+    "fastify": "5.12.8",
+    "pino": "10.4.0",
+    "qrcode": "1.5.4",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "@types/qrcode": "1.5.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "concurrently": "9.2.1",
+    "lucide-react": "1.70.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

@@ -1,0 +1,151 @@
+[
+  {
+    "file": "machine-backhoe.jpg",
+    "kind": "machine",
+    "fields": {
+      "equipment_class": "backhoe_loader"
+    }
+  },
+  {
+    "file": "machine-excavator.jpg",
+    "kind": "machine",
+    "fields": {
+      "equipment_class": "excavator"
+    }
+  },
+  {
+    "file": "machine-tipper.jpg",
+    "kind": "machine",
+    "fields": {
+      "equipment_class": "tipper"
+    }
+  },
+  {
+    "file": "machine-roller.jpg",
+    "kind": "machine",
+    "fields": {
+      "equipment_class": "roller"
+    }
+  },
+  {
+    "file": "rc-M-T01.jpg",
+    "kind": "rc",
+    "fields": {
+      "reg_no": "TS 00 TE 0001",
+      "reg_date": "12-03-2019",
+      "owner_name": "RAVI KUMAR",
+      "relation": "S/O RAMESH KUMAR",
+      "vehicle_class": "CONSTRUCTION EQUIPMENT VEHICLE (BACKHOE LOADER)",
+      "make": "TESTMAKE",
+      "model": "3DX-T",
+      "year": "2019",
+      "chassis": "TSTBHL19C00000001",
+      "engine_no": "TSTE1900001"
+    }
+  },
+  {
+    "file": "rc-M-T02.jpg",
+    "kind": "rc",
+    "fields": {
+      "reg_no": "TS 00 TE 0002",
+      "reg_date": "04-07-2021",
+      "owner_name": "SRINIVAS RAO",
+      "relation": "S/O VENKAT RAO",
+      "vehicle_class": "CONSTRUCTION EQUIPMENT VEHICLE (BACKHOE LOADER)",
+      "make": "TESTMAKE",
+      "model": "3DX-T",
+      "year": "2021",
+      "chassis": "TSTBHL21C00000002",
+      "engine_no": "TSTE2100002",
+      "loan": "TEST FINANCE LTD"
+    }
+  },
+  {
+    "file": "rc-M-T04.jpg",
+    "kind": "rc",
+    "fields": {
+      "reg_no": "TS 00 TE 0004",
+      "reg_date": "18-01-2020",
+      "owner_name": "SRINIVAS RAO",
+      "relation": "S/O VENKAT RAO",
+      "vehicle_class": "GOODS CARRIER (TIPPER)",
+      "make": "TESTTRUCKS",
+      "model": "TT-1618",
+      "year": "2020",
+      "chassis": "TSTTRK20C00000004",
+      "engine_no": "TSTT2000004"
+    }
+  },
+  {
+    "file": "rc-M-T07.jpg",
+    "kind": "rc",
+    "fields": {
+      "reg_no": "TS 00 TE 0007",
+      "reg_date": "23-09-2016",
+      "owner_name": "K. NARAYANA",
+      "relation": "S/O K. RAMAIAH",
+      "vehicle_class": "CONSTRUCTION EQUIPMENT VEHICLE (BACKHOE LOADER)",
+      "make": "TESTMAKE",
+      "model": "3DX-T",
+      "year": "2016",
+      "chassis": "TSTBHL16C00000007",
+      "engine_no": "TSTE1600007"
+    }
+  },
+  {
+    "file": "insurance-M-T01.jpg",
+    "kind": "insurance",
+    "fields": {
+      "policy_no": "TEST-INS-0001",
+      "insured": "RAVI KUMAR",
+      "reg_no": "TS 00 TE 0001",
+      "chassis": "TSTBHL19C00000001",
+      "valid_from": "01-04-2026",
+      "valid_till": "31-03-2027",
+      "vehicle": "BACKHOE LOADER TESTMAKE 3DX-T"
+    }
+  },
+  {
+    "file": "pin-M-T01.jpg",
+    "kind": "pin_plate",
+    "fields": {
+      "make": "TESTMAKE",
+      "pin": "TSTBHL19C00000001",
+      "model": "3DX-T",
+      "year": "2019",
+      "mass": "7400 KG"
+    }
+  },
+  {
+    "file": "hours-M-T01.jpg",
+    "kind": "hour_meter",
+    "fields": {
+      "reading": "04821.6"
+    }
+  },
+  {
+    "file": "invoice-M-T03.jpg",
+    "kind": "invoice",
+    "fields": {
+      "invoice_no": "TEST/INV/0003",
+      "date": "09-11-2022",
+      "buyer": "SRINIVAS RAO",
+      "machine": "TESTMAKE EX-T 140 EXCAVATOR",
+      "pin": "TSTEXC22C00000003",
+      "engine_no": "TSTX2200003",
+      "amount": "₹ 38,50,000 (TEST)"
+    }
+  },
+  {
+    "file": "paper-form-raju.jpg",
+    "kind": "paper_form",
+    "fields": {
+      "owner_name": "Raju Yadav",
+      "phone": "+91 90000 00021",
+      "village": "Dharmasagar",
+      "machines": "1 backhoe loader",
+      "mitra": "Lakshmi (Mitra)",
+      "date": "10-11-2026"
+    }
+  }
+]
