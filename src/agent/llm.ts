@@ -34,6 +34,11 @@ const AppAnswerSchema = z.object({
   answer: z.string(),
 })
 
+type ToolRunnerParams = Parameters<Anthropic['beta']['messages']['toolRunner']>[0]
+/** A turn of the conversation so far, and the tools Claude may call (see `Llm.converse`). */
+export type ConverseMessage = ToolRunnerParams['messages'][number]
+export type ConverseTools = ToolRunnerParams['tools']
+
 export type Digest = z.infer<typeof DigestSchema>
 export interface DigestResult extends Digest {
   engine: string
@@ -171,15 +176,65 @@ export class Llm {
       })
       return response.parsed_output as z.infer<T>
     } catch (e) {
-      const service = viaOpenRouter ? 'OpenRouter' : 'Anthropic'
-      let reason = (e as Error).message
-      if (e instanceof Anthropic.AuthenticationError) reason = `Invalid ${service} API key`
-      else if (e instanceof Anthropic.PermissionDeniedError && viaOpenRouter) reason = `OpenRouter refused the request (403): ${e.message}`
-      else if (e instanceof Anthropic.RateLimitError) reason = `Rate limited by ${service}`
-      else if (e instanceof Anthropic.APIError && e.status === 402) reason = `${service}: out of credits (402)`
-      else if (e instanceof Anthropic.APIError) reason = `${service} API error ${e.status}: ${e.message}`
-      this.bus.log({ kind: 'agent', lane: '-', title: 'Claude call failed, using offline engine', detail: reason })
-      throw Object.assign(new Error(reason), { fallback: true })
+      throw this.failure(e, viaOpenRouter)
+    }
+  }
+
+  /** Logs why a Claude call failed, in words for the event log, and returns the error callers fall back on. */
+  private failure(e: unknown, viaOpenRouter: boolean): Error {
+    const service = viaOpenRouter ? 'OpenRouter' : 'Anthropic'
+    let reason = (e as Error).message
+    if (e instanceof Anthropic.AuthenticationError) reason = `Invalid ${service} API key`
+    else if (e instanceof Anthropic.PermissionDeniedError && viaOpenRouter) reason = `OpenRouter refused the request (403): ${e.message}`
+    else if (e instanceof Anthropic.RateLimitError) reason = `Rate limited by ${service}`
+    else if (e instanceof Anthropic.APIError && e.status === 402) reason = `${service}: out of credits (402)`
+    else if (e instanceof Anthropic.APIError) reason = `${service} API error ${e.status}: ${e.message}`
+    this.bus.log({ kind: 'agent', lane: '-', title: 'Claude call failed, using offline engine', detail: reason })
+    return Object.assign(new Error(reason), { fallback: true })
+  }
+
+  /**
+   * One conversation turn with tools: Claude may call the tools (each has its own `run`) as often as it
+   * needs, then answers in words. The SDK's tool runner drives the loop and checks each tool's input
+   * against its schema. Throws when there is no key or the call fails, so the caller can fall back.
+   */
+  async converse(opts: { system: string; messages: ConverseMessage[]; tools: ConverseTools; effort?: 'low' | 'medium' | 'high'; /** A model for this conversation instead of the configured one, e.g. claude-haiku-5-5. */ model?: string }): Promise<{ text: string; engine: string }> {
+    if (this.engine !== 'claude') throw Object.assign(new Error('No API key'), { fallback: true })
+    const viaOpenRouter = this.provider === 'openrouter'
+    const model = opts.model ? (viaOpenRouter ? openRouterModel(opts.model) : opts.model) : this.model
+    // Server-side refusal fallbacks don't exist for Haiku (a list of models is refused there), and OpenRouter rejects the parameter.
+    const fallbacks = !viaOpenRouter && !/haiku/.test(model)
+    const effort = opts.effort ?? 'low'
+    try {
+      const final = await this.anthropic().beta.messages.toolRunner({
+        model,
+        max_tokens: 16000,
+        ...(fallbacks ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
+        // The instructions never change between turns, so they can be cached; what changes goes in the messages.
+        system: [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }],
+        output_config: { effort },
+        tools: opts.tools,
+        messages: opts.messages,
+        // Send the whole history each turn: message threads are an Anthropic-only beta.
+        thread: false,
+        max_iterations: 8,
+      })
+      if (final.stop_reason === 'refusal') throw new Error(`Claude declined (${final.stop_details?.category ?? 'no category'})`)
+      const text = final.content
+        .flatMap((b) => (b.type === 'text' ? [b.text] : []))
+        .join('\n')
+        .trim()
+      // The last step can be a tool call with no words after it (a hand-over); the caller decides what that means.
+      if (!text && final.stop_reason !== 'end_turn' && final.stop_reason !== 'tool_use') throw new Error(`No reply (stop_reason ${final.stop_reason})`)
+      this.bus.log({
+        kind: 'agent',
+        lane: '-',
+        title: `Claude tool turn ok (${final.model}${viaOpenRouter ? ' via OpenRouter' : ''})`,
+        detail: `in ${final.usage.input_tokens} / out ${final.usage.output_tokens} tokens · effort ${effort}`,
+      })
+      return { text, engine: `claude · ${model}${viaOpenRouter ? ' via OpenRouter' : ''}` }
+    } catch (e) {
+      throw this.failure(e, viaOpenRouter)
     }
   }
 

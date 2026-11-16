@@ -7,18 +7,27 @@ import { KeyedQueue } from '../../shared/queue'
 import type { Agent } from '../agent'
 import { t } from '../i18n'
 import type { MessageRow } from '../store'
-import { isEnglishModel, listSayVoices, MacSay, ScriptedStt, StubTts, WHISPER_HINT, WhisperCli, WhisperServer, type Lang, type SpeechToText, type TextToSpeech } from './engines'
-import { hasDevanagari } from './match'
+import { isEnglishModel, LANG_NAME, listSayVoices, MacSay, SARVAM_SPEAKERS, SARVAM_STT_MODEL, SARVAM_TTS_MODEL, SarvamStt, SarvamTts, ScriptedStt, StubTts, WHISPER_HINT, WhisperCli, WhisperServer, type Lang, type SpeechToText, type TextToSpeech } from './engines'
+import { scriptLang } from './match'
 import { inspectOggOpus } from './ogg'
 import { findTools, probeDuration, type VoiceTools } from './tools'
 
 export type VoiceReplies = 'mirror' | 'always' | 'never'
+/** auto = Sarvam when a Sarvam key is set, otherwise this Mac (Whisper and the macOS voices). */
+export type VoiceEngine = 'auto' | 'local' | 'sarvam'
 
 export interface VoiceSettings {
   /** mirror = answer with a voice note when the person's last message was one. */
   replies: VoiceReplies
   voiceEn: string
   voiceHi: string
+  /** macOS has no Telugu voice out of the box; empty means Telugu replies need Sarvam (or go out as text). */
+  voiceTe: string
+  engine: VoiceEngine
+  /** Sarvam's voices, one per language (empty = the default persona). */
+  sarvamSpeakerEn: string
+  sarvamSpeakerHi: string
+  sarvamSpeakerTe: string
   maxSeconds: number
   /** Raw audio is deleted after this many hours; transcripts stay. */
   retentionHours: number
@@ -107,17 +116,21 @@ export class Voice {
   }
 
   private cacheKey(text: string, lang: Lang) {
-    const set = this.settings()
-    return createHash('sha1').update(`${lang === 'hi' ? set.voiceHi : set.voiceEn}|${text}`).digest('hex').slice(0, 20)
+    // Per voice, so a new engine or speaker records the fixed lines afresh instead of playing the old voice.
+    const engine = this.tts()
+    const voice = engine instanceof SarvamTts || engine instanceof MacSay ? engine.voiceId(lang) : ''
+    return createHash('sha1').update(`${voice}|${text}`).digest('hex').slice(0, 20)
   }
 
   /** Speaks every fixed line once, in the background, so replies only need an upload (or not even that). */
   async prewarm() {
-    if (typeof this.tts() === 'string') return
+    const engine = this.tts()
+    // Only with this Mac's free voices. A paid service speaks a fixed line the first time it is needed, then it is reused.
+    if (typeof engine === 'string' || engine instanceof SarvamTts) return
     let made = 0
     const t0 = Date.now()
     for (const line of this.staticLines) {
-      const lang: Lang = hasDevanagari(line) ? 'hi' : 'en'
+      const lang: Lang = scriptLang(line)
       if (existsSync(join(this.cacheDir, `${this.cacheKey(line, lang)}.ogg`))) continue
       try {
         await this.cachedSpeech(line, lang)
@@ -147,12 +160,18 @@ export class Voice {
       return Number.isFinite(n) && n > 0 ? n : d
     }
     const replies = s('voiceReplies')
+    const engine = s('voiceEngine')
     // The default changed to the fast English model: a saved path to a model that is gone falls back to it.
     const savedModel = s('whisperModel')
     return {
       replies: replies === 'always' || replies === 'never' ? replies : 'mirror',
       voiceEn: s('voiceEn') || 'Tara',
       voiceHi: s('voiceHi') || 'Lekha',
+      voiceTe: s('voiceTe') || '',
+      engine: engine === 'local' || engine === 'sarvam' ? engine : 'auto',
+      sarvamSpeakerEn: s('sarvamSpeakerEn') || '',
+      sarvamSpeakerHi: s('sarvamSpeakerHi') || '',
+      sarvamSpeakerTe: s('sarvamSpeakerTe') || '',
       maxSeconds: num('voiceMaxSeconds', 120),
       retentionHours: num('voiceRetentionHours', 24),
       whisperModel: (savedModel && existsSync(resolve(savedModel)) ? savedModel : '') || process.env.WHISPER_MODEL || DEFAULT_WHISPER_MODEL,
@@ -165,10 +184,29 @@ export class Voice {
     return this.toolsCache.tools
   }
 
+  /** The Sarvam key: saved in Settings, or SARVAM_API_KEY. */
+  sarvamKey(): { key: string; source: 'settings' | 'env' } | null {
+    const saved = this.agent.store.setting('sarvamApiKey')
+    if (saved) return { key: saved, source: 'settings' }
+    return process.env.SARVAM_API_KEY ? { key: process.env.SARVAM_API_KEY, source: 'env' } : null
+  }
+
+  /** The Sarvam key when speech should go through Sarvam; null for this Mac's engines; a string when it can't. */
+  private sarvam(): string | null | { key: string } {
+    const { engine } = this.settings()
+    if (engine === 'local') return null
+    const k = this.sarvamKey()
+    if (k) return { key: k.key }
+    return engine === 'sarvam' ? 'Sarvam is selected but no Sarvam API key is set (Settings → Voice notes)' : null
+  }
+
   /** The speech-to-text engine for a channel, or why there is none. */
   private stt(sandbox: boolean): SpeechToText | string {
     const set = this.settings()
     if (sandbox && this.scripted && !set.sandboxWhisper) return new ScriptedStt(this.scripted)
+    const sarvam = this.sarvam()
+    if (typeof sarvam === 'string') return sarvam
+    if (sarvam) return new SarvamStt(sarvam.key, { ffmpeg: this.tools().ffmpeg, tmpDir: this.tmpDir })
     const tools = this.tools()
     if (!tools.ffmpeg) return 'ffmpeg is not installed (brew install ffmpeg)'
     if (!tools.whisper) return 'whisper-cli is not installed (brew install whisper-cpp)'
@@ -196,10 +234,16 @@ export class Voice {
   private tts(): TextToSpeech | string {
     if (this.stubSpeech) return new StubTts()
     const tools = this.tools()
+    const set = this.settings()
+    const sarvam = this.sarvam()
+    if (typeof sarvam === 'string') return sarvam
+    if (sarvam) {
+      if (!tools.ffmpeg) return 'ffmpeg is not installed (brew install ffmpeg): it turns Sarvam’s audio into a WhatsApp voice note'
+      return new SarvamTts(sarvam.key, tools.ffmpeg, this.tmpDir, { speakers: { en: set.sarvamSpeakerEn, hi: set.sarvamSpeakerHi, te: set.sarvamSpeakerTe } })
+    }
     if (!tools.say) return 'no text-to-speech engine on this machine (macOS say)'
     if (!tools.ffmpeg) return 'ffmpeg is not installed (brew install ffmpeg)'
-    const set = this.settings()
-    return new MacSay(tools.say, tools.ffmpeg, { en: set.voiceEn, hi: set.voiceHi }, this.tmpDir)
+    return new MacSay(tools.say, tools.ffmpeg, { en: set.voiceEn, hi: set.voiceHi, te: set.voiceTe }, this.tmpDir)
   }
 
   async status() {
@@ -208,7 +252,8 @@ export class Voice {
     const modelPath = resolve(set.whisperModel)
     const stt = this.stt(false)
     const tts = this.tts()
-    const voices = tools.say ? (await listSayVoices(tools.say)).filter((v) => /^(en|hi)_/.test(v.locale)) : []
+    const voices = tools.say ? (await listSayVoices(tools.say)).filter((v) => /^(en|hi|te)_/.test(v.locale)) : []
+    const key = this.sarvamKey()
     const stored = this.agent.store.sql.get<{ n: number; bytes: number }>('select count(*) n, coalesce(sum(bytes), 0) bytes from media where deleted_at is null')
     return {
       settings: set,
@@ -217,6 +262,14 @@ export class Voice {
       stt: typeof stt === 'string' ? { ok: false, detail: stt } : { ok: true, detail: stt.name },
       tts: typeof tts === 'string' ? { ok: false, detail: tts } : { ok: true, detail: tts.name },
       voices,
+      sarvam: {
+        hasKey: !!key,
+        keySource: key?.source ?? null,
+        inUse: stt instanceof SarvamStt || tts instanceof SarvamTts,
+        sttModel: SARVAM_STT_MODEL,
+        ttsModel: SARVAM_TTS_MODEL,
+        defaultSpeakers: SARVAM_SPEAKERS,
+      },
       stored: { files: stored?.n ?? 0, bytes: stored?.bytes ?? 0 },
     }
   }
@@ -350,14 +403,15 @@ export class Voice {
     }
     if (!tr.text) return fail('empty', `${tr.engine}: no speech found`, t(lang, 'couldntHear'))
 
-    const spoken: Lang = tr.language === 'hi' || hasDevanagari(tr.text) ? 'hi' : 'en'
+    // The engine's detected language when it is one we answer in; otherwise the script the words came back in.
+    const spoken: Lang = tr.language === 'hi' || tr.language === 'te' ? tr.language : scriptLang(tr.text)
     Object.assign(payload, { state: 'ok', lang: spoken, language: tr.language, engine: tr.engine, sttMs: tr.ms })
     update(tr.text)
     bus.log({
       kind: 'agent',
       lane: 'A',
       live,
-      title: `Voice note transcribed (${spoken === 'hi' ? 'Hindi' : tr.language === 'en' || !tr.language ? 'English' : tr.language})`,
+      title: `Voice note transcribed (${spoken !== 'en' ? LANG_NAME[spoken] : tr.language === 'en' || !tr.language ? 'English' : tr.language})`,
       detail: `${seconds === null ? '?' : round1(seconds)} s of audio · ${tr.engine}${tr.ms ? ` in ${(tr.ms / 1000).toFixed(1)} s` : ''}`,
     })
     return { ok: true, text: tr.text, lang: spoken, seconds }
@@ -404,7 +458,7 @@ export class Voice {
   async speak(channelId: string, personId: string, text: string, lang?: Lang): Promise<{ ok: boolean; message?: MessageRow; error?: string }> {
     const { bus } = this.agent
     const live = this.agent.channels.get(channelId)?.mode === 'live'
-    const l: Lang = lang ?? (hasDevanagari(text) ? 'hi' : 'en')
+    const l: Lang = lang ?? scriptLang(text)
     const failed = (error: string) => {
       bus.log({ kind: 'agent', lane: 'A', live, title: 'Voice reply failed: sending text instead', detail: error })
       return { ok: false, error }
@@ -450,7 +504,7 @@ export class Voice {
       res = await this.agent.sendDm(channelId, personId, (c, to) => c.sendAudio(to, up.id, true), { ...record, payload: { ...record.payload, cached: false } })
     }
     if (res.message) this.agent.store.sql.run('update media set message_id=? where id=?', res.message.id, media.id)
-    if (res.ok) bus.log({ kind: 'agent', lane: 'A', live, title: `Voice reply sent (${l === 'hi' ? 'Hindi' : 'English'}, ${round1(info.durationSec)} s)`, detail: text.slice(0, 120) })
+    if (res.ok) bus.log({ kind: 'agent', lane: 'A', live, title: `Voice reply sent (${LANG_NAME[l]}, ${round1(info.durationSec)} s)`, detail: text.slice(0, 120) })
     return res
   }
 }

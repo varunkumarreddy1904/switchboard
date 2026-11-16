@@ -15,6 +15,7 @@ import { SANDBOX_MITRAS } from './sandbox/seed'
 import { appApi, hykrConsoleApi } from './hykr/api'
 import { EqxBridge, type EqxBridgeOptions } from './bridge/eqx'
 import { Hykr } from './hykr/brain'
+import { Ravi } from './ravi/ravi'
 import { Bus } from './shared/bus'
 import { randomToken } from './shared/crypto'
 import { Sql } from './shared/db'
@@ -75,6 +76,10 @@ export async function createApp(opts: AppOptions = {}) {
   // EquipXchange app bridge: offers, prices and job cards out; button taps and finished registrations in.
   const eqx = opts.eqx ? new EqxBridge(agent, hykr, { dataDir, ...opts.eqx }) : EqxBridge.fromEnv(agent, hykr, dataDir)
 
+  // Ravi, the supplier assistant: answers a registered owner's free messages once registration is at rest.
+  // Registered after the bridge, so messages the EquipXchange app owns still go to it first.
+  const ravi = new Ravi(agent, hykr)
+
   // The console has no login. When this server is reached through a public tunnel (cloudflared,
   // ngrok), expose only what Meta and the end user's phone need: webhooks and the app stub.
   app.addHook('onRequest', async (req, reply) => {
@@ -134,6 +139,7 @@ export async function createApp(opts: AppOptions = {}) {
   // at phones that no longer remember it. Start both sides fresh; live channels are untouched.
   agent.store.clearChannelData([SANDBOX_CLOUD, SANDBOX_LINKED])
   hykr.purgeMissing()
+  ravi.store.purgeMissing()
   agent.init(base)
   agent.voice.start()
   hykr.start()
@@ -159,6 +165,7 @@ export async function createApp(opts: AppOptions = {}) {
     base,
     serveWeb,
     hykr,
+    ravi,
     eqx,
     appUrl: site ? `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${appPort}` : null,
     async close() {

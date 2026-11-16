@@ -116,7 +116,7 @@ function VoiceSettings() {
   if (!st || !f) return null
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value })
   const voices = (prefix: string) => (st.voices as { name: string; locale: string }[]).filter((v) => v.locale.startsWith(prefix))
-  const voicePicker = (k: 'voiceEn' | 'voiceHi', prefix: string) => {
+  const voicePicker = (k: 'voiceEn' | 'voiceHi' | 'voiceTe', prefix: string) => {
     const list = voices(prefix)
     // `say -v Tara` picks "Tara (English (India))", so a short saved name matches the full one.
     const current = list.find((v) => v.name === f[k] || v.name.startsWith(`${f[k]} (`))
@@ -133,7 +133,8 @@ function VoiceSettings() {
       <input className="input" value={f[k]} onChange={set(k)} />
     )
   }
-  const speak = async (lang: 'en' | 'hi') => {
+  const [sarvamKey, setSarvamKey] = useState('')
+  const speak = async (lang: 'en' | 'hi' | 'te') => {
     const r: any = await run(`pv-${lang}`, () => post('/api/voice/preview', { lang }))
     if (r?.ok) setPreview(r.id)
   }
@@ -144,7 +145,10 @@ function VoiceSettings() {
         <h2>Voice notes</h2>
       </div>
       <p className="small faint" style={{ margin: 0 }}>
-        People can onboard and ask questions with WhatsApp voice notes. Each note is turned into text on this Mac with Whisper, and replies are spoken back with the Mac's voices. Audio is not sent to any other service; only the transcript goes to Claude (if a key is set, through OpenRouter when it is an OpenRouter key), with phone numbers and emails masked.
+        People can onboard and ask questions with WhatsApp voice notes. {st.sarvam.inUse
+          ? 'Speech goes through Sarvam: each recording is sent to Sarvam to be turned into text, and the words of a spoken reply are sent to Sarvam to be voiced.'
+          : "Each note is turned into text on this Mac with Whisper, and replies are spoken back with the Mac's voices. Audio is not sent to any other service."}{' '}
+        The transcript goes to Claude only if a key is set (through OpenRouter when it is an OpenRouter key), with phone numbers and emails masked.
       </p>
       <div className="grid cols-2">
         <div className="stack">
@@ -167,10 +171,44 @@ function VoiceSettings() {
               <option value="never">Never (text only)</option>
             </select>
           </Field>
-          <div className="grid cols-2">
-            <Field label="English voice">{voicePicker('voiceEn', 'en_')}</Field>
-            <Field label="Hindi voice">{voicePicker('voiceHi', 'hi_')}</Field>
-          </div>
+          <Field label="Speech engine" hint="Sarvam hears and speaks Telugu, Hindi and English. With Sarvam, recordings and the words to speak are sent to Sarvam's servers.">
+            <select className="select" value={f.engine} onChange={set('engine')}>
+              <option value="auto">Sarvam when a key is set, otherwise this Mac</option>
+              <option value="sarvam">Sarvam</option>
+              <option value="local">This Mac only (Whisper and macOS voices)</option>
+            </select>
+          </Field>
+          <Field label="Sarvam API key" hint={st.sarvam.hasKey ? `A key is set (${st.sarvam.keySource === 'env' ? 'from SARVAM_API_KEY' : 'saved in Settings'}). Paste a new one to replace it.` : 'From dashboard.sarvam.ai. Kept in this Mac’s database; never shown again.'}>
+            <div className="row" style={{ gap: 8 }}>
+              <input className="input" type="password" autoComplete="off" placeholder={st.sarvam.hasKey ? '••••••••' : 'Paste the key'} value={sarvamKey} onChange={(e) => setSarvamKey(e.target.value)} />
+              {st.sarvam.keySource === 'settings' && (
+                <button className="btn" disabled={busy === 'sarvam-rm'} onClick={async () => (await run('sarvam-rm', () => post('/api/settings', { sarvamApiKey: null }), 'Sarvam key removed'), reload())}>
+                  Remove
+                </button>
+              )}
+            </div>
+          </Field>
+          {st.sarvam.inUse ? (
+            <div className="grid cols-2">
+              <Field label="Sarvam voice: English" hint={`Default ${st.sarvam.defaultSpeakers.en}`}>
+                <input className="input" value={f.sarvamSpeakerEn} onChange={set('sarvamSpeakerEn')} />
+              </Field>
+              <Field label="Sarvam voice: Hindi" hint={`Default ${st.sarvam.defaultSpeakers.hi}`}>
+                <input className="input" value={f.sarvamSpeakerHi} onChange={set('sarvamSpeakerHi')} />
+              </Field>
+              <Field label="Sarvam voice: Telugu" hint={`Default ${st.sarvam.defaultSpeakers.te}`}>
+                <input className="input" value={f.sarvamSpeakerTe} onChange={set('sarvamSpeakerTe')} />
+              </Field>
+            </div>
+          ) : (
+            <div className="grid cols-2">
+              <Field label="English voice">{voicePicker('voiceEn', 'en_')}</Field>
+              <Field label="Hindi voice">{voicePicker('voiceHi', 'hi_')}</Field>
+              <Field label="Telugu voice" hint="macOS needs a Telugu voice downloaded; otherwise use Sarvam.">
+                {voicePicker('voiceTe', 'te_')}
+              </Field>
+            </div>
+          )}
           <div className="grid cols-2">
             <Field label="Longest voice note (seconds)">
               <input className="input" type="number" min={5} max={600} value={f.maxSeconds} onChange={set('maxSeconds')} />
@@ -192,7 +230,11 @@ function VoiceSettings() {
         <button
           className="btn primary"
           disabled={busy === 'voice'}
-          onClick={async () => (await run('voice', () => post('/api/settings', { voice: { ...f, maxSeconds: Number(f.maxSeconds), retentionHours: Number(f.retentionHours) } }), 'Voice settings saved'), reload())}
+          onClick={async () => {
+            await run('voice', () => post('/api/settings', { ...(sarvamKey.trim() ? { sarvamApiKey: sarvamKey.trim() } : {}), voice: { ...f, maxSeconds: Number(f.maxSeconds), retentionHours: Number(f.retentionHours) } }), 'Voice settings saved')
+            setSarvamKey('')
+            reload()
+          }}
         >
           Save
         </button>
@@ -201,6 +243,9 @@ function VoiceSettings() {
         </button>
         <button className="btn" disabled={!st.tts.ok || busy === 'pv-hi'} onClick={() => speak('hi')}>
           Hear Hindi voice
+        </button>
+        <button className="btn" disabled={!st.tts.ok || busy === 'pv-te'} onClick={() => speak('te')}>
+          Hear Telugu voice
         </button>
         {preview && <audio key={preview} controls autoPlay src={`/api/media/${preview}`} style={{ height: 34 }} />}
       </div>

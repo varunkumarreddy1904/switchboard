@@ -104,7 +104,7 @@ describe('audio checks', () => {
     const dir = mkdtempSync(join(tmpdir(), 'voice-test-'))
     try {
       const out = join(dir, 'a.ogg')
-      await new MacSay(tools.say!, tools.ffmpeg!, { en: en.name, hi: en.name }, dir).speak('Hello from the test.', 'en', out)
+      await new MacSay(tools.say!, tools.ffmpeg!, { en: en.name, hi: en.name, te: '' }, dir).speak('Hello from the test.', 'en', out)
       const info = inspectOggOpus(readFileSync(out))
       expect(info?.channels).toBe(1)
       expect(info?.durationSec).toBeGreaterThan(0.3)

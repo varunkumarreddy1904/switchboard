@@ -434,6 +434,9 @@ export function consoleApi(agent: Agent): FastifyPluginAsync {
       effectivePublicBase: agent.publicBase(),
       hasApiKey: !!(store.setting('anthropicApiKey') || process.env.ANTHROPIC_API_KEY),
       apiKeySource: store.setting('anthropicApiKey') ? 'settings' : process.env.ANTHROPIC_API_KEY ? 'env' : null,
+      // Sarvam (speech in Indian languages): the key itself is never sent to the browser.
+      hasSarvamKey: !!agent.voice.sarvamKey(),
+      sarvamKeySource: agent.voice.sarvamKey()?.source ?? null,
       // An OpenRouter key (sk-or-…) is used with OpenRouter's Claude endpoint; the model id is translated for it.
       provider: agent.llm.provider,
       providerModel: agent.llm.model,
@@ -447,10 +450,14 @@ export function consoleApi(agent: Agent): FastifyPluginAsync {
       if (b.publicBaseUrl !== undefined) store.setSetting('publicBaseUrl', b.publicBaseUrl.trim() ? b.publicBaseUrl.trim().replace(/\/$/, '') : null)
       if (b.anthropicApiKey !== undefined) store.setSetting('anthropicApiKey', b.anthropicApiKey ? b.anthropicApiKey.trim() : null)
       if (b.anthropicModel !== undefined) store.setSetting('anthropicModel', b.anthropicModel.trim() || null)
+      if (b.sarvamApiKey !== undefined) store.setSetting('sarvamApiKey', b.sarvamApiKey ? String(b.sarvamApiKey).trim() : null)
       const v = b.voice ?? {}
       if (v.replies !== undefined) store.setSetting('voiceReplies', ['mirror', 'always', 'never'].includes(v.replies) ? v.replies : null)
       if (v.voiceEn !== undefined) store.setSetting('voiceEn', String(v.voiceEn).trim() || null)
       if (v.voiceHi !== undefined) store.setSetting('voiceHi', String(v.voiceHi).trim() || null)
+      if (v.voiceTe !== undefined) store.setSetting('voiceTe', String(v.voiceTe).trim() || null)
+      if (v.engine !== undefined) store.setSetting('voiceEngine', ['local', 'sarvam'].includes(v.engine) ? v.engine : null)
+      for (const k of ['sarvamSpeakerEn', 'sarvamSpeakerHi', 'sarvamSpeakerTe']) if (v[k] !== undefined) store.setSetting(k, String(v[k]).trim().toLowerCase() || null)
       if (v.maxSeconds !== undefined) store.setSetting('voiceMaxSeconds', Number(v.maxSeconds) > 0 ? String(Math.min(600, Number(v.maxSeconds))) : null)
       if (v.retentionHours !== undefined) store.setSetting('voiceRetentionHours', Number(v.retentionHours) > 0 ? String(Number(v.retentionHours)) : null)
       if (v.whisperModel !== undefined) store.setSetting('whisperModel', String(v.whisperModel).trim() || null)
@@ -463,8 +470,9 @@ export function consoleApi(agent: Agent): FastifyPluginAsync {
     // ------------------------------------------------------------ voice notes
     app.get('/voice/status', async () => agent.voice.status())
     app.post<{ Body: { text?: string; lang?: string } }>('/voice/preview', async (req, reply) => {
-      const lang = req.body?.lang === 'hi' ? 'hi' : 'en'
-      const text = String(req.body?.text ?? '').trim() || (lang === 'hi' ? 'नमस्ते! मैं EquipXchange का असिस्टेंट हूँ।' : "Hi! I'm EquipXchange's assistant. Send a photo of your machine to get started.")
+      const lang = req.body?.lang === 'hi' || req.body?.lang === 'te' ? req.body.lang : 'en'
+      const sample = { hi: 'नमस्ते! मैं EquipXchange का असिस्टेंट हूँ।', te: 'నమస్కారం! నేను EquipXchange అసిస్టెంట్‌ని.', en: "Hi! I'm EquipXchange's assistant. Send a photo of your machine to get started." }
+      const text = String(req.body?.text ?? '').trim() || sample[lang as 'en' | 'hi' | 'te']
       try {
         return { ok: true, id: await agent.voice.preview(text, lang) }
       } catch (e) {

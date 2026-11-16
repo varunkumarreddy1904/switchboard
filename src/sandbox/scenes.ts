@@ -4,6 +4,7 @@ import { SANDBOX_CLOUD, SANDBOX_LINKED } from '../agent/channels'
 import type { ConversationRow, MessageRow } from '../agent/store'
 import { STUB_OGG } from '../agent/voice/ogg'
 import type { Hykr } from '../hykr/brain'
+import { RaviStore, addDays, today } from '../ravi/store'
 import { loadFixtures } from './api'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -745,6 +746,56 @@ export const SCENES: Scene[] = [
       await h.tapId('srinivas', 'c2_yes')
       await h.wait(() => h.hx.store.machines(owner.id).every((m) => m.status !== 'paused'), 'machines back in the desk queue')
       h.assert(h.ownerOf('srinivas')?.status === 'active' && !!h.hx.store.consent(owner.id, 'C1') && !!h.hx.store.consent(owner.id, 'C2'), 'owner active with fresh C1 and C2 records')
+    },
+  },
+  // ======================================================================= Ravi: the supplier assistant
+  {
+    id: 22,
+    title: 'Ravi · A registered owner answers a rental request (approval cards)',
+    shows: 'After registration, free messages go to Ravi. A quote is sent only after a tap on its approval card; No leaves everything as it was; registration commands still work.',
+    async run(h) {
+      await h.onboard('ben')
+      const machineId = await h.machine('ben', { rc: 'rc-M-T01.jpg' })
+      await h.api('POST', `/api/hx/machines/${machineId}/approve`, { by: 'scene' })
+      await h.wait(() => h.hx.store.machine(machineId)?.status === 'active', 'machine verified and live')
+      const owner = h.ownerOf('ben')!
+      const pid = h.personFor('ben')!
+      const ravi = new RaviStore(h.agent.store.sql)
+      const req = ravi.addRequest({ owner_id: owner.id, machine_id: machineId, builder: 'Scene Builders', site: 'Kazipet', start_date: addDays(today(), 1), days: 3, offered_day: 600_000 })
+      const ask = async () => {
+        const t = Date.now()
+        h.say('ben', 'Any rental requests?')
+        await h.bizMsg('ben', (m) => !!m.buttons?.some((b) => b.id === `ravi:q:${req.id}`), 'request card with Quote and Decline buttons', t)
+      }
+      const card = async () => {
+        await h.wait(() => ravi.waiting(pid)?.args.requestId === req.id, 'approval card waiting')
+        return ravi.waiting(pid)!
+      }
+
+      let t0 = Date.now()
+      await ask()
+      await h.tapId('ben', `ravi:q:${req.id}`)
+      const first = await card()
+      h.assert(/Send this quote to Scene Builders\?/.test(first.summary) && /Rent ₹18,000 \+ GST 18% ₹3,240 = ₹21,240/.test(first.summary), 'the card says exactly what a Yes will send (3 days at ₹6,000, plus GST)')
+      h.assert(ravi.request(req.id)!.status === 'pending', 'nothing sent before the tap')
+      await h.tapId('ben', `ravi:n:${first.id}`)
+      await h.agentSaid('ben', (m) => /left it as it was/.test(m.text), 'No: told nothing changed', t0)
+      h.assert(ravi.request(req.id)!.status === 'pending', 'request still pending after No')
+
+      t0 = Date.now()
+      await ask()
+      await h.tapId('ben', `ravi:q:${req.id}`)
+      const second = await card()
+      await h.tapId('ben', `ravi:y:${second.id}`)
+      await h.agentSaid('ben', (m) => /Your quote of ₹21,240 has gone to Scene Builders/.test(m.text), 'Yes: quote sent and confirmed', t0)
+      h.assert(ravi.request(req.id)!.status === 'quoted' && ravi.request(req.id)!.quote_day === 600_000, 'request quoted at the builder’s price')
+      h.assert(h.hx.store.events(owner.id).some((e: any) => e.type === 'ravi.quote_sent'), 'quote recorded as an event')
+
+      t0 = Date.now()
+      h.say('ben', 'Show my machines')
+      await h.agentSaid('ben', (m) => /Your machines:/.test(m.text) && /live/.test(m.text), 'machines listed with their status', t0)
+      await h.move('ben', () => h.say('ben', 'add machine'), 'registration command still reaches the registration flow')
+      await h.until('ben', 'class', 'machine type asked')
     },
   },
 ]

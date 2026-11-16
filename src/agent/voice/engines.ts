@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { readFile, rm, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
-import { STUB_OGG } from './ogg'
-import { run, toVoiceOgg, toWav16k } from './tools'
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, join } from 'node:path'
+import { inspectOggOpus, STUB_OGG } from './ogg'
+import { run, splitWav, toVoiceOgg, toWav16k } from './tools'
 
-export type Lang = 'en' | 'hi'
+export type Lang = 'en' | 'hi' | 'te'
+export const LANG_NAME: Record<Lang, string> = { en: 'English', hi: 'Hindi', te: 'Telugu' }
 
 // ------------------------------------------------------------------ speech-to-text
 
@@ -181,6 +182,136 @@ export class ScriptedStt implements SpeechToText {
   }
 }
 
+// ------------------------------------------------------------------ Sarvam (hosted, Indian languages)
+
+export const SARVAM_BASE = 'https://api.sarvam.ai'
+/** The settings the EquipExchange app found best for how people here speak (dialect words kept as said). */
+export const SARVAM_STT_MODEL = 'saaras:v4'
+export const SARVAM_STT_MODE = 'codemix'
+export const SARVAM_TTS_MODEL = 'bulbul:v4-flash'
+export const SARVAM_SPEAKERS: Record<Lang, string> = { en: 'deven_en_conversation', hi: 'tarun_hi_conversational', te: 'pooja_te_conversation' }
+export const SARVAM_PACE: Record<Lang, number> = { en: 1, hi: 0.9, te: 1 }
+/** Sarvam's one-request endpoint is for short clips (about 30 s); longer notes are sent in pieces. */
+const SARVAM_CLIP_SECONDS = 25
+const SARVAM_CODE: Record<Lang, string> = { en: 'en-IN', hi: 'hi-IN', te: 'te-IN' }
+const MIME_BY_EXT: Record<string, string> = { '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.m4a': 'audio/mp4', '.mp3': 'audio/mpeg', '.amr': 'audio/amr', '.aac': 'audio/aac', '.wav': 'audio/wav' }
+
+type Fetch = typeof fetch
+
+async function sarvamError(what: string, res: Response): Promise<Error> {
+  const body = (await res.text().catch(() => '')).slice(0, 200)
+  const why = res.status === 403 ? 'the API key was refused' : res.status === 429 ? 'rate limit or credits used up' : body || res.statusText
+  return new Error(`Sarvam ${what} ${res.status}: ${why}`)
+}
+
+/**
+ * Sarvam speech-to-text: the language is detected (Telugu, Hindi, English and mixes of them), and words
+ * come back in the language's own script. The recording goes to Sarvam's servers; nothing is kept there
+ * by this code. WhatsApp's Ogg/Opus is sent as it is, so short notes need no ffmpeg.
+ */
+export class SarvamStt implements SpeechToText {
+  readonly name: string
+  constructor(
+    private key: string,
+    private opts: { model?: string; mode?: string; ffmpeg: string | null; tmpDir: string; fetch?: Fetch },
+  ) {
+    this.name = `Sarvam · ${opts.model ?? SARVAM_STT_MODEL}`
+  }
+
+  async transcribe({ file }: { file: string }): Promise<Transcript> {
+    const t0 = Date.now()
+    const bytes = await readFile(file)
+    const seconds = inspectOggOpus(bytes)?.durationSec ?? null
+    const mime = MIME_BY_EXT[extname(file).toLowerCase()] ?? 'application/octet-stream'
+    if (seconds === null || seconds <= SARVAM_CLIP_SECONDS + 3 || !this.opts.ffmpeg) {
+      return { ...(await this.clip(bytes, mime)), engine: this.name, ms: Date.now() - t0 }
+    }
+    // A long note: cut it into short pieces, hear each in turn, and join the words.
+    const base = join(this.opts.tmpDir, `stt-${randomBytes(5).toString('hex')}`)
+    try {
+      await splitWav(this.opts.ffmpeg, file, base, SARVAM_CLIP_SECONDS)
+      const pieces = (await readdir(dirname(base))).filter((f) => f.startsWith(`${basename(base)}-`)).sort()
+      const parts: { text: string; language: string | null }[] = []
+      for (const p of pieces) parts.push(await this.clip(await readFile(join(dirname(base), p)), 'audio/wav'))
+      const text = parts.map((p) => p.text).filter(Boolean).join(' ')
+      return { text, language: parts.find((p) => p.language)?.language ?? null, engine: this.name, ms: Date.now() - t0 }
+    } finally {
+      const dir = dirname(base)
+      await Promise.all((await readdir(dir).catch(() => [] as string[])).filter((f) => f.startsWith(`${basename(base)}-`)).map((f) => rm(join(dir, f), { force: true })))
+    }
+  }
+
+  private async clip(bytes: Buffer, mime: string): Promise<{ text: string; language: string | null }> {
+    const model = this.opts.model ?? SARVAM_STT_MODEL
+    const form = new FormData()
+    form.append('file', new Blob([new Uint8Array(bytes)], { type: mime }), 'recording')
+    form.append('model', model)
+    form.append('language_code', 'unknown')
+    if (model === 'saaras:v4' || model === 'saaras:v3') form.append('mode', this.opts.mode ?? SARVAM_STT_MODE)
+    const res = await (this.opts.fetch ?? fetch)(`${SARVAM_BASE}/speech-to-text`, { method: 'POST', headers: { 'api-subscription-key': this.key }, body: form, signal: AbortSignal.timeout(30_000) })
+    if (!res.ok) throw await sarvamError('speech-to-text', res)
+    const j = (await res.json()) as { transcript?: string; language_code?: string | null }
+    // "te-IN" → "te"
+    return { text: (j.transcript ?? '').replace(/\s+/g, ' ').trim(), language: j.language_code ? j.language_code.toLowerCase().split(/[-_]/)[0] : null }
+  }
+}
+
+/**
+ * Sarvam text-to-speech (Bulbul): one voice per language. The words to speak go to Sarvam's servers.
+ * It answers with WAV; ffmpeg turns that into the mono Ogg/Opus WhatsApp wants for a voice note.
+ */
+export class SarvamTts implements TextToSpeech {
+  readonly name: string
+  constructor(
+    private key: string,
+    private ffmpeg: string,
+    private tmpDir: string,
+    private opts: { model?: string; speakers?: Partial<Record<Lang, string>>; fetch?: Fetch } = {},
+  ) {
+    this.name = `Sarvam · ${opts.model ?? SARVAM_TTS_MODEL}`
+  }
+
+  /** What identifies the voice for a language (cached recordings are kept per voice). */
+  voiceId(lang: Lang) {
+    return `sarvam|${this.opts.model ?? SARVAM_TTS_MODEL}|${this.opts.speakers?.[lang] || SARVAM_SPEAKERS[lang]}`
+  }
+
+  async speak(text: string, lang: Lang, out: string) {
+    const settings = {
+      text,
+      speaker: this.opts.speakers?.[lang] || SARVAM_SPEAKERS[lang],
+      model: this.opts.model ?? SARVAM_TTS_MODEL,
+      pace: SARVAM_PACE[lang],
+      speech_sample_rate: '24000',
+      output_audio_codec: 'wav',
+    }
+    const post = (body: Record<string, unknown>) =>
+      (this.opts.fetch ?? fetch)(`${SARVAM_BASE}/text-to-speech`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'api-subscription-key': this.key },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(45_000),
+      })
+    // Sarvam's own client names the language field `target_language_code`; its reference page says `language_code`.
+    let res = await post({ ...settings, target_language_code: SARVAM_CODE[lang] })
+    if (res.status === 400 || res.status === 422) {
+      const first = await sarvamError('text-to-speech', res)
+      res = await post({ ...settings, language_code: SARVAM_CODE[lang] })
+      if (!res.ok) throw first
+    }
+    if (!res.ok) throw await sarvamError('text-to-speech', res)
+    const audio = ((await res.json()) as { audios?: string[] }).audios?.[0]
+    if (!audio) throw new Error('Sarvam text-to-speech returned no audio')
+    const wav = join(this.tmpDir, `tts-${randomBytes(5).toString('hex')}.wav`)
+    try {
+      await writeFile(wav, Buffer.from(audio, 'base64'))
+      await toVoiceOgg(this.ffmpeg, wav, out)
+    } finally {
+      await rm(wav, { force: true })
+    }
+  }
+}
+
 // ------------------------------------------------------------------ text-to-speech
 
 export interface TextToSpeech {
@@ -199,7 +330,12 @@ export class MacSay implements TextToSpeech {
     private tmpDir: string,
   ) {}
 
+  voiceId(lang: Lang) {
+    return this.voices[lang]
+  }
+
   async speak(text: string, lang: Lang, out: string) {
+    if (!this.voices[lang]) throw new Error(`no macOS voice is set for ${LANG_NAME[lang]}`)
     const base = join(this.tmpDir, `tts-${randomBytes(5).toString('hex')}`)
     try {
       // Text goes in a file, not argv: no quoting issues and no length limit.

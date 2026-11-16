@@ -70,6 +70,10 @@ export const toWav16k = (ffmpeg: string, input: string, output: string) => ffmpe
 export const toVoiceOgg = (ffmpeg: string, input: string, output: string) =>
   ffmpegOrThrow(ffmpeg, ['-i', input, '-ac', '1', '-ar', '48000', '-c:a', 'libopus', '-b:a', '24k', '-application', 'voip', output])
 
+/** Cuts a recording into 16 kHz mono WAV pieces of `seconds` each: `<base>-000.wav`, `<base>-001.wav`, … */
+export const splitWav = (ffmpeg: string, input: string, base: string, seconds: number) =>
+  ffmpegOrThrow(ffmpeg, ['-i', input, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'segment', '-segment_time', String(seconds), `${base}-%03d.wav`])
+
 /** Duration of any audio file ffprobe understands (used for non-Opus uploads such as forwarded .m4a files). */
 export async function probeDuration(ffprobe: string, file: string): Promise<number | null> {
   const r = await run(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], 20_000)

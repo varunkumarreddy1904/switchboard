@@ -5,6 +5,10 @@
  */
 
 export const hasDevanagari = (s: string) => /[ऀ-ॿ]/.test(s)
+export const hasTelugu = (s: string) => /[\u0C00-\u0C7F]/.test(s)
+
+/** The language a text is written in, by its script: Telugu or Devanagari letters; anything else counts as English. */
+export const scriptLang = (s: string): 'en' | 'hi' | 'te' => (hasTelugu(s) ? 'te' : hasDevanagari(s) ? 'hi' : 'en')
 
 /** Lower-case, NFC (so फ़ and फ + nukta compare equal), punctuation → spaces, any script kept. */
 export function normalize(s: string): string {

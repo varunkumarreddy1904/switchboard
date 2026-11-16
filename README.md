@@ -40,7 +40,7 @@ npm start          # http://localhost:4000
 
 Open http://localhost:4000. Then:
 
-1. **Simulator → Run all.** Twenty-one scripted scenes drive the personas and assert what the agent did (12–21 are PoC #12).
+1. **Simulator → Run all.** Twenty-two scripted scenes drive the personas and assert what the agent did (12–21 are PoC #12; 22 is Ravi).
 2. **Simulator → Tools → Play chatter.** Before you play it, record admin consent on **Groups**; without consent every message is dropped. The chatter is 40 events across a 300-member group and a Community.
 3. **Team inbox:** the conversations. **AI agent:** digests and "ask the group". **Event log:** every webhook, Graph call and socket event, with raw JSON and signatures.
 4. **HYKR app** at http://localhost:5175 (also http://localhost:4000/app): the owner's side of PoC #12. Sign in with "Continue on WhatsApp" or a code, then watch the registration fill in.
@@ -232,6 +232,32 @@ The tunnel exposes only these paths:
 
 The console and the desk stay on localhost.
 
+## Ravi: the supplier assistant
+
+Once an owner has registered, their free messages are answered by **Ravi** (`src/ravi/`). The registration flow, its cards and its commands (START, STOP, HELP, STATUS, PAPERS, "add machine", "add a manager", "talk to a person") work exactly as before: Ravi takes a message only while registration is at rest.
+
+Ravi's persona and rules are re-written from the EquipExchange supplier assistant in the basecamp repo. Only the business behaviour is carried over; nothing connects to basecamp, and the records are Switchboard's own.
+
+What an owner can do, in English, Hindi or Telugu:
+
+- see their machines, with status and rates;
+- see rental requests from builders;
+- send a quote (at the builder's price, the listed rate, or a price they state) or decline a request;
+- change a machine's rate;
+- block dates, and open them again;
+- add another machine (Ravi hands over to the registration steps).
+
+**Approval cards.** Sending a quote, declining, changing a rate and opening blocked dates wait for a tap on a card with Yes and No buttons. The card's words are built in code, so it says exactly what a Yes will do. A typed or spoken yes or no works too. Blocking dates happens at once.
+
+**Two engines:**
+
+- **With an API key** (Settings, or `ANTHROPIC_API_KEY`): Claude holds the conversation and calls Ravi's tools. Every tool works only on that owner's records. Ravi uses Claude Haiku 5.5 (`RAVI_MODEL`) so replies come back in a few seconds; the other AI features keep the model set in Settings.
+- **Without a key:** a small scripted engine answers "any requests?", "show my machines" and "blocked dates" in English, with Quote and Decline buttons on each request. Anything else goes on to the registration flow's own reply.
+
+**Demo data.** There are no builders in this PoC. The first time an owner with a live machine (approved on the Verification desk) talks to Ravi, two demo rental requests arrive for it.
+
+**Still to do:** the fixed lines (cards and confirmations) exist in Hindi and Telugu but have not been checked by a native speaker. Voice in Telugu and Hindi needs a Sarvam key: see [Voice notes](#voice-notes).
+
 ## Using real numbers (Live lab)
 
 ### Official Cloud API number (safe)
@@ -267,6 +293,25 @@ The Groups API needs an Official Business Account, which test numbers are not. L
 - **Which number:** use a throwaway number, never your onboarding number or your personal one.
 
 ## Voice notes
+
+### Telugu, Hindi and English with Sarvam
+
+By default speech stays on this Mac (Whisper and the macOS voices, described below). With a **Sarvam API key** it goes through [Sarvam](https://dashboard.sarvam.ai) instead, which hears and speaks Telugu, Hindi and English:
+
+- **Voice notes in:** Sarvam speech-to-text (`saaras:v4`, code-mix mode). The language is detected, and the words come back in its own script. Notes longer than about 25 seconds are sent in pieces.
+- **Voice replies out:** Sarvam text-to-speech (`bulbul:v4-flash`), one voice per language. ffmpeg turns the answer into a WhatsApp voice note (`brew install ffmpeg`).
+- **Language:** a reply is spoken in the language it is written in (by script). Ravi answers a voice note in the language it was spoken in.
+
+Set the key on **Settings → Voice notes**, or as `SARVAM_API_KEY`. "Speech engine" chooses between Sarvam and this Mac; "Hear Telugu voice" plays a sample. The model and voice names are the ones the EquipExchange app uses; the three voices can be changed on the same page.
+
+Things to know:
+
+- **Data leaves this Mac.** Each recording, and the words of each spoken reply, are sent to Sarvam.
+- **It costs Sarvam credits** per note and per reply. Fixed lines are recorded once, on first use, and reused.
+- **Simulator voice notes** still use the words you typed, so the scenes need no key.
+- **The registration questions are English only.** Telugu and Hindi are for Ravi's replies, the approval cards and the voice layer's own lines; those fixed lines have not been checked by a native speaker.
+- The Sarvam calls are tested against a stand-in, not the real service, until a key is set.
+
 
 People can onboard and ask questions by WhatsApp voice note. The voice layer sits at the edges; onboarding and the bot still only see text.
 
@@ -322,6 +367,7 @@ The server keeps `whisper-server` running warm on `127.0.0.1:8178` and falls bac
 | 19 | The desk | Ask for the insurance photo → owner sends it → back in the queue; approve → Live and KYC T1; reject → reason told; every decision is an event |
 | 20 | Reply speed | Taps, text and photos answered within their targets |
 | 21 | Talk to a person, STOP, START | Hand-over to the Ops desk; STOP withdraws consent and pauses machines; START asks again and resumes |
+| 22 | Ravi: an owner answers a rental request | Free messages after registration go to Ravi; a quote is sent only after a tap on its approval card |
 
 `npm test` runs them headless over real HTTP. It also runs unit tests for:
 - signatures, tokens, redaction and dedupe;

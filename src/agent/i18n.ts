@@ -84,10 +84,25 @@ const HI: typeof EN = {
   roleOther: 'अन्य',
 }
 
+/**
+ * Telugu: only the lines the voice layer itself says (a note it could not hear, the spoken list of choices).
+ * Every other fixed line falls back to English. To be checked by a native speaker before a pilot.
+ */
+const TE: Partial<typeof EN> = {
+  tapToContinue: 'కొనసాగడానికి దయచేసి ఒక బటన్ నొక్కండి.',
+  didntCatch: 'క్షమించండి, నాకు అర్థం కాలేదు.',
+  linkAlsoSent: 'లింక్‌ను మెసేజ్‌గా కూడా పంపాను.',
+  youCanSay: 'మీరు ఇలా చెప్పవచ్చు: {options}.',
+  or: 'లేదా',
+  couldntHear: 'క్షమించండి, ఆ వాయిస్ నోట్ నాకు అర్థం కాలేదు. మళ్ళీ చెప్పగలరా, లేదా టైప్ చేయగలరా?',
+  tooLong: 'ఆ వాయిస్ నోట్ {seconds} సెకన్ల కంటే ఎక్కువగా ఉంది. దయచేసి చిన్నది పంపండి, లేదా మీ మెసేజ్ టైప్ చేయండి.',
+  cantListen: 'క్షమించండి, ఇప్పుడు నేను వాయిస్ నోట్లు వినలేకపోతున్నాను. మీ మెసేజ్ టైప్ చేయగలరా?',
+}
+
 export type StringKey = keyof typeof EN
 
 export function t(lang: Lang, key: StringKey, vars: Record<string, string | number> = {}): string {
-  const s = (lang === 'hi' ? HI : EN)[key]
+  const s = lang === 'hi' ? HI[key] : lang === 'te' ? (TE[key] ?? EN[key]) : EN[key]
   return s.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''))
 }
 

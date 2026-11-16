@@ -14,7 +14,7 @@ import { Store, type ConversationRow, type MessageRow } from './store'
 import { KeyedQueue } from '../shared/queue'
 import { t, youCanSay } from './i18n'
 import type { Lang } from './voice/engines'
-import { hasDevanagari, spokenText } from './voice/match'
+import { hasDevanagari, hasTelugu, scriptLang, spokenText } from './voice/match'
 import { Voice } from './voice/service'
 import type { Brain } from './inbound'
 import { currentStopwatch } from './timing'
@@ -71,7 +71,7 @@ export class Agent {
   }
 
   /**
-   * The language to answer in: Hindi if the person's latest message (or voice note) was in Hindi, else English.
+   * The language to answer in: Hindi or Telugu if the person's latest message (or voice note) was in it, else English.
    * Button taps carry the tapped title, so a Hindi button keeps the conversation in Hindi.
    */
   convLang(conversationId: string): Lang {
@@ -82,10 +82,11 @@ export class Agent {
     for (const r of rows) {
       if (r.type === 'audio') {
         const lang = r.payload ? JSON.parse(r.payload).lang : undefined
-        if (lang) return lang === 'hi' ? 'hi' : 'en'
+        if (lang) return lang === 'hi' || lang === 'te' ? lang : 'en'
         continue
       }
       if (!r.text || r.text.startsWith('[')) continue
+      if (hasTelugu(r.text)) return 'te'
       if (hasDevanagari(r.text)) return 'hi'
       if (/[a-z]{2}/i.test(r.text)) return 'en'
     }
@@ -185,7 +186,7 @@ export class Agent {
   async text(channelId: string, personId: string, body: string, opts: { voice?: boolean } = {}) {
     if (opts.voice !== false && this.voice.wantsVoice(channelId, personId)) {
       const { speech, hadLink } = spokenText(body)
-      const lang: Lang = hasDevanagari(body) ? 'hi' : 'en'
+      const lang: Lang = scriptLang(body)
       const spoken = speech ? await this.voice.speak(channelId, personId, hadLink ? `${speech} ${t(lang, 'linkAlsoSent')}` : speech, lang) : { ok: false }
       if (spoken.ok && !hadLink) return spoken
     }
@@ -205,7 +206,7 @@ export class Agent {
 
   private async speakChoices(channelId: string, personId: string, body: string, options: string[]) {
     if (!this.voice.wantsVoice(channelId, personId)) return
-    const lang: Lang = hasDevanagari(body) ? 'hi' : 'en'
+    const lang: Lang = scriptLang(body)
     await this.voice.speak(channelId, personId, `${spokenText(body).speech} ${youCanSay(lang, options)}`, lang)
   }
 
